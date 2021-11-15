@@ -5,12 +5,15 @@ const admin = require("firebase-admin");
 const app = express()
 const port = process.env.PORT || 5000
 const cors = require('cors')
+const ObjectId = require('mongodb').ObjectId
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
 // middleware
 app.use(cors())
 app.use(express.json())
 // doctor-portal-92230-firebase-adminsdk.json
 
+//jwt firebase
 var serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -20,13 +23,13 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
 //this is a middleware which is used to verify the jwt token from the client side by admin server(firebase)
-async function verifyToken(req,res, next){
-    if (req.headers?.authorization?.startsWith('Bearer')){
+async function verifyToken(req, res, next) {
+    if (req.headers?.authorization?.startsWith('Bearer')) {
         const token = req.headers.authorization.split(' ')[1]
-        try{
-            const decodedUser =await admin.auth().verifyIdToken(token)
+        try {
+            const decodedUser = await admin.auth().verifyIdToken(token)
             req.decodedEmail = decodedUser.email
-        }catch{
+        } catch {
 
         }
 
@@ -46,37 +49,46 @@ async function run() {
             const result = await appointmentsCollection.insertOne(appointment);
             res.json(result)
         })
+
+        // get appointment
+        app.get('/appointments/:id', async (req, res) => {
+            const id = req.params.id
+            const query = { _id: ObjectId(id) }
+            const result = await appointmentsCollection.findOne(query)
+            res.send(result)
+
+        })
         //getting appointments for the specific user and specific data by query strings
         app.get('/appointments', verifyToken, async (req, res) => {
-            const email = req.query.email 
+            const email = req.query.email
             const date = req.query.date
-            const query = { email: email, date: date};
+            const query = { email: email, date: date };
             const cursor = appointmentsCollection.find(query);
             const appointments = await cursor.toArray()
             res.json(appointments)
         })
 
         //find a user if he is admin 
-        app.get('/users', async(req, res)=>{
+        app.get('/users', async (req, res) => {
             const email = req.query.email
-            const query = {email: email}
+            const query = { email: email }
             const user = await usersCollection.findOne(query)
             let isAdmin = false;
-            if(user?.role === 'admin'){
-                isAdmin = true 
+            if (user?.role === 'admin') {
+                isAdmin = true
             }
-            res.json({ admin: isAdmin})
-            
+            res.json({ admin: isAdmin })
+
         })
         //saving users from register form
-        app.post('/users', async(req, res)=>{
+        app.post('/users', async (req, res) => {
             const user = req.body;
             const result = await usersCollection.insertOne(user)
             res.json(result)
-        }) 
+        })
 
         //saving google login users to database using put method as users can be both new and old thats why upsert needed
-        app.put('/users', async(req,res) =>{
+        app.put('/users', async (req, res) => {
             const user = req.body;
             const filter = { email: user.email };
             const options = { upsert: true };
@@ -87,13 +99,13 @@ async function run() {
             res.json(result)
         })
         // making an admin by updating users (inserting role as admin)
-        app.put('/users/admin', verifyToken,  async(req,res)=>{
+        app.put('/users/admin', verifyToken, async (req, res) => {
             const user = req.body; //this user is to be added as admin(got it from input field) by admin 
             const requester = req.decodedEmail //requester is the signed in user who is performing addAdmin operation. 
-            if(requester){
+            if (requester) {
                 const query = { email: requester }
                 const requesterAccount = await usersCollection.findOne(query)
-                if(requesterAccount.role === 'admin'){ //only if the requester is admin he can add other user as admin
+                if (requesterAccount.role === 'admin') { //only if the requester is admin he can add other user as admin
                     const filter = { email: user.email }
                     const updateDoc = {
                         $set: {
@@ -104,11 +116,29 @@ async function run() {
                     res.json(result)
                 }
 
-            }else{
-                res.status(403).json({ message: "you don't have access to make admin"})
+            } else {
+                res.status(403).json({ message: "you don't have access to make admin" })
             }
-            
+
         })
+
+        // stripe api
+        app.post("/create-payment-intent", async (req, res) => {
+            const paymentInfo = req.body;
+            const amount = paymentInfo.price * 100;
+
+            // Create a PaymentIntent with the order amount and currency
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: "usd",
+                payment_method_types: [
+                    "card"
+                ],
+            });
+            res.send({
+                clientSecret: paymentIntent.client_secret,
+            });
+        });
 
     } finally {
         // await client.close()
