@@ -3,6 +3,7 @@ require('dotenv').config()
 const { MongoClient } = require('mongodb');
 const admin = require("firebase-admin");
 const app = express()
+const fileUpload = require("express-fileupload");
 const port = process.env.PORT || 5000
 const cors = require('cors')
 const ObjectId = require('mongodb').ObjectId
@@ -11,7 +12,8 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET);
 // middleware
 app.use(cors())
 app.use(express.json())
-// doctor-portal-92230-firebase-adminsdk.json
+app.use(fileUpload())
+
 
 //jwt firebase
 var serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -42,6 +44,8 @@ async function run() {
         const database = client.db('doctorsPortal')
         const appointmentsCollection = database.collection('appointments')
         const usersCollection = database.collection('users')
+        const doctorsCollection = database.collection('doctors')
+        const peopleCollection = database.collection('people')
 
         //post booking
         app.post('/appointments', async (req, res) => {
@@ -55,6 +59,20 @@ async function run() {
             const id = req.params.id
             const query = { _id: ObjectId(id) }
             const result = await appointmentsCollection.findOne(query)
+            res.send(result)
+
+        })
+        //update appointment after payment
+        app.put('/appointments/:id', async (req, res) => {
+            const id = req.params.id
+            const filter = { _id: ObjectId(id) }
+            const payment = req.body;
+            const updateDoc = {
+                $set: {
+                    payment: payment
+                },
+            };
+            const result = await appointmentsCollection.updateOne(filter, updateDoc)
             res.send(result)
 
         })
@@ -121,7 +139,44 @@ async function run() {
             }
 
         })
+        // adding doctors
+        app.post('/doctors', async (req, res) => {
+            console.log(req.files);
+            // console.log(req.body);
+            const body = req.body;
+            const imageData = req.files.image.data;
+            const encodedImage = imageData.toString('base64');
+            const image = Buffer.from(encodedImage, 'base64');
+            const doctor = {
+                ...body,
+                image
+            }
+            const result = await doctorsCollection.insertOne(doctor)
+            res.json(result)
+        })
+        //get doctors
+        app.get('/doctors', async (req, res) => {
+            const cursor = doctorsCollection.find({})
+            const doctors = await cursor.toArray();
+            res.json(doctors)
+        })
+        //create work people
+        app.post('/people', async (req, res) => {
+            const body = req.body;
+            const files = req.files;
+            // console.log(body);
+            // console.log(files);
 
+            const imageData = req.files.image.data
+            const encodedImage = imageData.toString('base64');
+            const image = Buffer.from(encodedImage, 'base64');
+            const people = {
+                ...body, image
+            }
+            const result = await peopleCollection.insertOne(people)
+            res.json(result)
+
+        })
         // stripe api
         app.post("/create-payment-intent", async (req, res) => {
             const paymentInfo = req.body;
@@ -131,6 +186,7 @@ async function run() {
             const paymentIntent = await stripe.paymentIntents.create({
                 amount: amount,
                 currency: "usd",
+                description: 'Software development services',
                 payment_method_types: [
                     "card"
                 ],
