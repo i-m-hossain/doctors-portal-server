@@ -177,6 +177,12 @@ async function run() {
             res.json(result)
 
         })
+        // get people
+        app.get('/people', async(req, res)=>{
+            const cursor = peopleCollection.find({})
+            const people = await cursor.toArray()
+            res.json(people)
+        })
         // stripe api
         app.post("/create-payment-intent", async (req, res) => {
             const paymentInfo = req.body;
